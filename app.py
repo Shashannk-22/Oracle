@@ -746,23 +746,30 @@ def run():
     uploaded = request.files.get("file")
     mode     = request.form.get("mode", "test")
 
-    def stream():
-        # ── Save upload ──
-        if not uploaded:
+    # Save file and load data BEFORE the generator starts
+    # Flask closes the file handle once the response starts streaming
+    if not uploaded:
+        def _no_file():
             yield sse({"type": "log", "text": "ERROR: No file received."})
-            return
+        return Response(_no_file(), mimetype="text/event-stream",
+                        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
-        save_path = UPLOAD_FOLDER / uploaded.filename
-        uploaded.save(str(save_path))
-        yield sse({"type": "log", "text": f"File received: {uploaded.filename}"})
+    save_path = UPLOAD_FOLDER / uploaded.filename
+    uploaded.save(str(save_path))
+    filename = uploaded.filename
 
-        # ── Load Excel ──
-        try:
-            df = pd.read_excel(save_path)
-            yield sse({"type": "log", "text": f"Loaded {len(df)} rows from spreadsheet"})
-        except Exception as e:
-            yield sse({"type": "log", "text": f"ERROR reading file: {e}"})
-            return
+    try:
+        df = pd.read_excel(save_path)
+    except Exception as e:
+        def _bad_file(err=e):
+            yield sse({"type": "log", "text": f"ERROR reading file: {err}"})
+        return Response(_bad_file(), mimetype="text/event-stream",
+                        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+    def stream():
+        yield sse({"type": "log", "text": f"File received: {filename}"})
+        yield sse({"type": "log", "text": f"Loaded {len(df)} rows from spreadsheet"})
+        
 
         # ── Validate columns ──
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
