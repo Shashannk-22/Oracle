@@ -5,28 +5,19 @@ SELECT
     T.LAST_ANALYZED,
     T.STATUS,
     P.PARTITION_COUNT,
-    P.LARGEST_PARTITION,
-    P.SMALLEST_PARTITION,
     ROUND(NVL(S.SIZE_GB, 0), 2)                         AS TABLE_SIZE_GB,
     ROUND(NVL(IX.SIZE_GB, 0), 2)                        AS INDEX_SIZE_GB,
     ROUND(NVL(S.SIZE_GB,0) + NVL(IX.SIZE_GB,0), 2)     AS TOTAL_SIZE_GB,
-    IX.INDEX_COUNT,
     CMT.COMMENTS
 
 FROM DBA_TABLES T
 
--- Partition count, largest and smallest partition
+-- Partition count only — removed LARGEST and SMALLEST partition (slow)
 LEFT JOIN (
     SELECT
         TABLE_OWNER,
         TABLE_NAME,
-        COUNT(*)                                        AS PARTITION_COUNT,
-        MAX(PARTITION_NAME)
-            KEEP (DENSE_RANK FIRST
-                  ORDER BY NUM_ROWS DESC NULLS LAST)    AS LARGEST_PARTITION,
-        MAX(PARTITION_NAME)
-            KEEP (DENSE_RANK FIRST
-                  ORDER BY NUM_ROWS ASC NULLS LAST)     AS SMALLEST_PARTITION
+        COUNT(*)                                        AS PARTITION_COUNT
     FROM DBA_TAB_PARTITIONS
     WHERE TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
     GROUP BY TABLE_OWNER, TABLE_NAME
@@ -47,11 +38,10 @@ LEFT JOIN (
     GROUP BY SEGMENT_NAME
 ) S ON S.SEGMENT_NAME = T.TABLE_NAME
 
--- Index storage — two-table join only, no DBA_IND_PARTITIONS
+-- Index storage
 LEFT JOIN (
     SELECT
         I.TABLE_NAME,
-        COUNT(DISTINCT I.INDEX_NAME)                    AS INDEX_COUNT,
         ROUND(SUM(S2.BYTES)/1024/1024/1024, 4)          AS SIZE_GB
     FROM DBA_INDEXES I
     JOIN DBA_SEGMENTS S2
