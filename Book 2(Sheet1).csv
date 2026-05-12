@@ -2,40 +2,36 @@ SELECT
     TP.TABLE_OWNER                                      AS SCHEMA_NAME,
     TP.TABLE_NAME,
     TP.PARTITION_NAME,
-    TP.PARTITION_POSITION,
-    TP.HIGH_VALUE,
     TP.NUM_ROWS,
     TP.LAST_ANALYZED,
-    TP.TABLESPACE_NAME,
-    TP.COMPRESSION,
-    TP.STATUS,
-    -- Size per individual partition
-    ROUND(S.SIZE_GB, 4)                                 AS PARTITION_SIZE_GB,
-    -- Flag empty partitions
+    ROUND(S.SIZE_GB, 2)                                 AS PARTITION_SIZE_GB,
     CASE
-        WHEN NVL(TP.NUM_ROWS, 0) = 0
-            THEN 'EMPTY PARTITION'
+        WHEN NVL(TP.NUM_ROWS, 0) = 0 THEN 'EMPTY'
         ELSE 'HAS DATA'
     END                                                 AS PARTITION_STATUS,
-    -- Age band per partition based on last analyzed
+    TC.PARTITION_COUNT,
+    ROUND(TS.TABLE_SIZE_GB, 2)                          AS TABLE_SIZE_GB,
     CASE
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -6)
+        WHEN NVL(TP.NUM_ROWS, 0) = 0
+            THEN 'EMPTY'
+        WHEN NVL(TP.LAST_ANALYZED, DATE '2000-01-01')
+             >= ADD_MONTHS(SYSDATE, -6)
             THEN 'ACTIVE'
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -12)
+        WHEN NVL(TP.LAST_ANALYZED, DATE '2000-01-01')
+             >= ADD_MONTHS(SYSDATE, -12)
             THEN 'RECENT'
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -60)
+        WHEN NVL(TP.LAST_ANALYZED, DATE '2000-01-01')
+             >= ADD_MONTHS(SYSDATE, -60)
             THEN 'AGING'
-        WHEN TP.LAST_ANALYZED >= DATE '2016-01-01'
+        WHEN NVL(TP.LAST_ANALYZED, DATE '2000-01-01')
+             >= DATE '2016-01-01'
             THEN 'STALE'
-        WHEN TP.LAST_ANALYZED < DATE '2016-01-01'
-            THEN 'PRE-2016'
-        ELSE 'NEVER ANALYZED'
-    END                                                 AS PARTITION_AGE_BAND
+        ELSE 'PRE-2016'
+    END                                                 AS ACTIVITY_BAND
 
 FROM DBA_TAB_PARTITIONS TP
 
--- Size per partition from DBA_SEGMENTS
--- Segment name = partition name for partitioned tables
+-- Size per individual partition
 LEFT JOIN (
     SELECT
         SEGMENT_NAME,
@@ -48,84 +44,38 @@ LEFT JOIN (
         'TABLE SUBPARTITION'
     )
     GROUP BY SEGMENT_NAME, PARTITION_NAME
-) S ON S.SEGMENT_NAME    = TP.TABLE_NAME
-   AND S.PARTITION_NAME   = TP.PARTITION_NAME
+) S ON S.SEGMENT_NAME  = TP.TABLE_NAME
+   AND S.PARTITION_NAME = TP.PARTITION_NAME
 
-WHERE TP.TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
+-- Total partition count per table
+LEFT JOIN (
+    SELECT
+        TABLE_OWNER,
+        TABLE_NAME,
+        COUNT(*)                                        AS PARTITION_COUNT
+    FROM DBA_TAB_PARTITIONS
+    WHERE TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
+    GROUP BY TABLE_OWNER, TABLE_NAME
+) TC ON TC.TABLE_OWNER = TP.TABLE_OWNER
+    AND TC.TABLE_NAME   = TP.TABLE_NAME
 
-ORDER BY
-    TP.TABLE_OWNER,
-    TP.TABLE_NAME,
-    TP.PARTITION_POSITION;
-
-
-
-
-
-
-
-
-
-
-
-
-
-SELECT
-    TP.TABLE_OWNER                                      AS SCHEMA_NAME,
-    TP.TABLE_NAME,
-    TP.PARTITION_NAME,
-    TP.PARTITION_POSITION,
-    TP.HIGH_VALUE,
-    TP.NUM_ROWS,
-    TP.LAST_ANALYZED,
-    TP.TABLESPACE_NAME,
-    TP.COMPRESSION,
-    TP.STATUS,
-    -- Size per individual partition
-    ROUND(S.SIZE_GB, 4)                                 AS PARTITION_SIZE_GB,
-    -- Flag empty partitions
-    CASE
-        WHEN NVL(TP.NUM_ROWS, 0) = 0
-            THEN 'EMPTY PARTITION'
-        ELSE 'HAS DATA'
-    END                                                 AS PARTITION_STATUS,
-    -- Age band per partition based on last analyzed
-    CASE
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -6)
-            THEN 'ACTIVE'
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -12)
-            THEN 'RECENT'
-        WHEN TP.LAST_ANALYZED >= ADD_MONTHS(SYSDATE, -60)
-            THEN 'AGING'
-        WHEN TP.LAST_ANALYZED >= DATE '2016-01-01'
-            THEN 'STALE'
-        WHEN TP.LAST_ANALYZED < DATE '2016-01-01'
-            THEN 'PRE-2016'
-        ELSE 'NEVER ANALYZED'
-    END                                                 AS PARTITION_AGE_BAND
-
-FROM DBA_TAB_PARTITIONS TP
-
--- Size per partition from DBA_SEGMENTS
--- Segment name = partition name for partitioned tables
+-- Total table size
 LEFT JOIN (
     SELECT
         SEGMENT_NAME,
-        PARTITION_NAME,
-        ROUND(SUM(BYTES)/1024/1024/1024, 4)             AS SIZE_GB
+        ROUND(SUM(BYTES)/1024/1024/1024, 4)             AS TABLE_SIZE_GB
     FROM DBA_SEGMENTS
     WHERE OWNER = 'MOD_LPC'
     AND SEGMENT_TYPE IN (
         'TABLE PARTITION',
         'TABLE SUBPARTITION'
     )
-    GROUP BY SEGMENT_NAME, PARTITION_NAME
-) S ON S.SEGMENT_NAME    = TP.TABLE_NAME
-   AND S.PARTITION_NAME   = TP.PARTITION_NAME
+    GROUP BY SEGMENT_NAME
+) TS ON TS.SEGMENT_NAME = TP.TABLE_NAME
 
 WHERE TP.TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
 
 ORDER BY
     TP.TABLE_OWNER,
     TP.TABLE_NAME,
-    TP.PARTITION_POSITION;
+    TP.PARTITION_NAME;
