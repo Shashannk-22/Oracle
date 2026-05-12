@@ -11,7 +11,6 @@ SELECT
     ROUND(NVL(IX.SIZE_GB, 0), 2)                        AS INDEX_SIZE_GB,
     ROUND(NVL(S.SIZE_GB,0) + NVL(IX.SIZE_GB,0), 2)     AS TOTAL_SIZE_GB,
     IX.INDEX_COUNT,
-    IX.INDEX_PARTITION_COUNT,
     CMT.COMMENTS
 
 FROM DBA_TABLES T
@@ -34,7 +33,7 @@ LEFT JOIN (
 ) P ON P.TABLE_OWNER = T.OWNER
    AND P.TABLE_NAME   = T.TABLE_NAME
 
--- Table storage — segments always physically in MOD_LPC
+-- Table storage
 LEFT JOIN (
     SELECT
         SEGMENT_NAME,
@@ -48,23 +47,20 @@ LEFT JOIN (
     GROUP BY SEGMENT_NAME
 ) S ON S.SEGMENT_NAME = T.TABLE_NAME
 
--- Index storage and partition count — only from MOD_LPC to avoid double counting
+-- Index storage — two-table join only, no DBA_IND_PARTITIONS
 LEFT JOIN (
     SELECT
         I.TABLE_NAME,
         COUNT(DISTINCT I.INDEX_NAME)                    AS INDEX_COUNT,
-        COUNT(IP.PARTITION_NAME)                        AS INDEX_PARTITION_COUNT,
         ROUND(SUM(S2.BYTES)/1024/1024/1024, 4)          AS SIZE_GB
     FROM DBA_INDEXES I
-    JOIN DBA_IND_PARTITIONS IP
-        ON IP.INDEX_OWNER = I.OWNER
-        AND IP.INDEX_NAME  = I.INDEX_NAME
     JOIN DBA_SEGMENTS S2
         ON S2.OWNER        = I.OWNER
         AND S2.SEGMENT_NAME = I.INDEX_NAME
         AND S2.SEGMENT_TYPE IN (
             'INDEX PARTITION',
-            'INDEX SUBPARTITION'
+            'INDEX SUBPARTITION',
+            'INDEX'
         )
     WHERE I.OWNER = 'MOD_LPC'
     GROUP BY I.TABLE_NAME
