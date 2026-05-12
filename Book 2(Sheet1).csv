@@ -1,22 +1,47 @@
 SELECT
     T.OWNER                                         AS SCHEMA_NAME,
     T.TABLE_NAME,
-    T.PARTITIONED,
     T.NUM_ROWS,
     T.LAST_ANALYZED,
-    T.ROW_MOVEMENT,
     T.STATUS,
-    P.PARTITION_COUNT,
-    P.LARGEST_PARTITION,
-    P.SMALLEST_PARTITION,
-    ROUND(S.SIZE_GB, 2)                             AS SIZE_GB,
-    ROUND(S.SIZE_GB * 2000, 0)                      AS EST_ANNUAL_COST_USD,
+    T.ROW_MOVEMENT,
+
+    -- Table Partition Info
+    TP.PARTITION_COUNT                              AS TABLE_PARTITION_COUNT,
+    TP.LARGEST_PARTITION                            AS LARGEST_TABLE_PARTITION,
+    TP.SMALLEST_PARTITION                           AS SMALLEST_TABLE_PARTITION,
+
+    -- Index Partition Info
+    IP.INDEX_COUNT                                  AS INDEX_COUNT,
+    IP.INDEX_PARTITION_COUNT                        AS INDEX_PARTITION_COUNT,
+    IP.INDEX_NAMES                                  AS INDEX_NAMES,
+
+    -- Table Storage
+    ROUND(TS.SIZE_GB, 2)                            AS TABLE_SIZE_GB,
+
+    -- Index Storage
+    ROUND(IS_.SIZE_GB, 2)                           AS INDEX_SIZE_GB,
+
+    -- Combined Storage
+    ROUND(NVL(TS.SIZE_GB,0) + NVL(IS_.SIZE_GB,0), 2) AS TOTAL_SIZE_GB,
+
+    -- Cost
+    ROUND((NVL(TS.SIZE_GB,0) + NVL(IS_.SIZE_GB,0))
+          * 2000, 0)                                AS EST_ANNUAL_COST_USD,
+
+    -- Column Count
     C.COLUMN_COUNT,
+
+    -- Comments
     CMT.COMMENTS,
+
+    -- DML Activity
     M.LAST_DML,
     NVL(M.INSERTS, 0)                               AS INSERTS,
     NVL(M.UPDATES, 0)                               AS UPDATES,
     NVL(M.DELETES, 0)                               AS DELETES,
+
+    -- Activity Band
     CASE
         WHEN NVL(T.NUM_ROWS, 0) = 0
             THEN 'EMPTY'
@@ -37,25 +62,43 @@ SELECT
 
 FROM DBA_TABLES T
 
--- Partition count and largest/smallest partition per table
+-- Table Partition Details
 LEFT JOIN (
     SELECT
         TABLE_OWNER,
         TABLE_NAME,
         COUNT(*)                                    AS PARTITION_COUNT,
-        MAX(P1.PARTITION_NAME)
-            KEEP (DENSE_RANK FIRST ORDER BY NUM_ROWS DESC NULLS LAST)
-                                                    AS LARGEST_PARTITION,
-        MAX(P1.PARTITION_NAME)
-            KEEP (DENSE_RANK FIRST ORDER BY NUM_ROWS ASC NULLS LAST)
-                                                    AS SMALLEST_PARTITION
-    FROM DBA_TAB_PARTITIONS P1
+        MAX(PARTITION_NAME)
+            KEEP (DENSE_RANK FIRST
+                  ORDER BY NUM_ROWS DESC NULLS LAST) AS LARGEST_PARTITION,
+        MAX(PARTITION_NAME)
+            KEEP (DENSE_RANK FIRST
+                  ORDER BY NUM_ROWS ASC NULLS LAST)  AS SMALLEST_PARTITION
+    FROM DBA_TAB_PARTITIONS
     WHERE TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
     GROUP BY TABLE_OWNER, TABLE_NAME
-) P ON P.TABLE_OWNER = T.OWNER
-   AND P.TABLE_NAME  = T.TABLE_NAME
+) TP ON TP.TABLE_OWNER = T.OWNER
+    AND TP.TABLE_NAME   = T.TABLE_NAME
 
--- Physical storage size
+-- Index Partition Details
+LEFT JOIN (
+    SELECT
+        I.TABLE_OWNER,
+        I.TABLE_NAME,
+        COUNT(DISTINCT I.INDEX_NAME)                AS INDEX_COUNT,
+        COUNT(IP.PARTITION_NAME)                    AS INDEX_PARTITION_COUNT,
+        LISTAGG(DISTINCT I.INDEX_NAME, ', ')
+            WITHIN GROUP (ORDER BY I.INDEX_NAME)    AS INDEX_NAMES
+    FROM DBA_INDEXES I
+    JOIN DBA_IND_PARTITIONS IP
+        ON IP.INDEX_OWNER = I.OWNER
+        AND IP.INDEX_NAME  = I.INDEX_NAME
+    WHERE I.TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
+    GROUP BY I.TABLE_OWNER, I.TABLE_NAME
+) IP ON IP.TABLE_OWNER = T.OWNER
+    AND IP.TABLE_NAME   = T.TABLE_NAME
+
+-- Table Segment Storage
 LEFT JOIN (
     SELECT
         OWNER,
@@ -64,13 +107,35 @@ LEFT JOIN (
     FROM DBA_SEGMENTS
     WHERE OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
     AND SEGMENT_TYPE IN (
-        'TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION'
+        'TABLE',
+        'TABLE PARTITION',
+        'TABLE SUBPARTITION'
     )
     GROUP BY OWNER, SEGMENT_NAME
-) S ON S.OWNER       = T.OWNER
-   AND S.SEGMENT_NAME = T.TABLE_NAME
+) TS ON TS.OWNER        = T.OWNER
+    AND TS.SEGMENT_NAME  = T.TABLE_NAME
 
--- Column count
+-- Index Segment Storage
+LEFT JOIN (
+    SELECT
+        I.TABLE_OWNER,
+        I.TABLE_NAME,
+        ROUND(SUM(S.BYTES)/1024/1024/1024, 4)       AS SIZE_GB
+    FROM DBA_SEGMENTS S
+    JOIN DBA_INDEXES I
+        ON I.OWNER      = S.OWNER
+        AND I.INDEX_NAME = S.SEGMENT_NAME
+    WHERE S.OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
+    AND S.SEGMENT_TYPE IN (
+        'INDEX',
+        'INDEX PARTITION',
+        'INDEX SUBPARTITION'
+    )
+    GROUP BY I.TABLE_OWNER, I.TABLE_NAME
+) IS_ ON IS_.TABLE_OWNER = T.OWNER
+     AND IS_.TABLE_NAME   = T.TABLE_NAME
+
+-- Column Count
 LEFT JOIN (
     SELECT OWNER, TABLE_NAME, COUNT(*) AS COLUMN_COUNT
     FROM DBA_TAB_COLUMNS
@@ -79,7 +144,7 @@ LEFT JOIN (
 ) C ON C.OWNER      = T.OWNER
    AND C.TABLE_NAME  = T.TABLE_NAME
 
--- Table comments
+-- Table Comments
 LEFT JOIN (
     SELECT OWNER, TABLE_NAME, COMMENTS
     FROM DBA_TAB_COMMENTS
@@ -87,7 +152,7 @@ LEFT JOIN (
 ) CMT ON CMT.OWNER      = T.OWNER
      AND CMT.TABLE_NAME  = T.TABLE_NAME
 
--- DML activity
+-- DML Activity
 LEFT JOIN (
     SELECT
         TABLE_OWNER,
@@ -107,4 +172,4 @@ AND   T.PARTITIONED = 'YES'
 
 ORDER BY
     T.OWNER,
-    SIZE_GB DESC NULLS LAST;
+    TOTAL_SIZE_GB DESC NULLS LAST;
