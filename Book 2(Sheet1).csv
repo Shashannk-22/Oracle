@@ -1,30 +1,49 @@
-SELECT
-    T.OWNER                                         AS SCHEMA_NAME,
-    T.TABLE_NAME,
-    T.NUM_ROWS,
-    T.LAST_ANALYZED,
-    P.PARTITION_COUNT,
-    ROUND(NVL(S.SIZE_GB, 0), 2)                     AS TABLE_SIZE_GB
-
-FROM DBA_TABLES T
-
-LEFT JOIN (
-    SELECT TABLE_OWNER, TABLE_NAME, COUNT(*) AS PARTITION_COUNT
-    FROM DBA_TAB_PARTITIONS
-    WHERE TABLE_OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
-    GROUP BY TABLE_OWNER, TABLE_NAME
-) P ON P.TABLE_OWNER = T.OWNER
-   AND P.TABLE_NAME   = T.TABLE_NAME
-
-LEFT JOIN (
-    SELECT SEGMENT_NAME, ROUND(SUM(BYTES)/1024/1024/1024, 2) AS SIZE_GB
-    FROM DBA_SEGMENTS
-    WHERE OWNER = 'MOD_LPC'
-    AND SEGMENT_TYPE IN ('TABLE PARTITION','TABLE SUBPARTITION')
-    GROUP BY SEGMENT_NAME
-) S ON S.SEGMENT_NAME = T.TABLE_NAME
-
-WHERE T.OWNER IN ('MOD_LPC','MOD_MUI','MOD_BID','MOD_OPR')
-AND   T.PARTITIONED = 'YES'
-
-ORDER BY T.OWNER, TABLE_SIZE_GB DESC NULLS LAST;
+1
+Trigger delay
+PA polls Outlook every 1–5 min by default
+Upgrade to premium push connector for near-instant triggering
+Accept small delay for non-critical environments
+Configurable per environment
+2
+Duplicate flow run
+Same alert email triggers the flow twice
+Check email message-ID against Excel log before writing
+Terminate flow run immediately if ID already exists
+No duplicate rows in dashboard
+3
+Parse action fails
+Unexpected or changed email format
+Use "Run After: Failed" branch in PA to catch the error
+Write raw subject + body to Excel, flag row as Unparsed
+Notify admin for manual review
+No data lost
+4
+Excel file locked
+File open in browser or desktop app
+PA's built-in retry fires automatically (up to 8 attempts)
+If all retries fail, send admin notification
+Usually self-heals without intervention
+5
+Connector throttled
+Too many flow runs in a short window
+PA queues pending runs automatically
+Resumes processing once rate limit resets
+Slight delay only, no data dropped
+6
+Teams notification fails
+Teams outage or misconfigured connector
+Add "Run After: Failed" fallback action in PA
+Fallback sends an Outlook email to the team instead
+Team always notified via at least one channel
+7
+Tableau data stale
+SharePoint connection dropped or refresh failed
+Show last-refresh timestamp prominently on dashboard
+Display warning banner if data is older than 10 minutes
+Users always aware of data freshness
+8
+Flow disabled / suspended
+PA plan limit hit or repeated action failure
+Set up PA flow health monitor as a separate watchdog flow
+Email admin immediately on suspension
+Pipeline is self-monitoring
